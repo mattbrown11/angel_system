@@ -229,19 +229,14 @@ class ActivityHMMRos:
 
         """
         assert end_time > start_time
-        n = int(np.round((end_time - start_time)/self.dt))
-        n = max([n, 1])
-        n += 1
-        times_ = np.linspace(start_time, end_time, n)
-        times_ = (times_[1:] + times_[:-1])/2
-        X = np.tile(np.atleast_2d(conf_vec), (len(times_), 1))
+        t = (start_time + end_time)/2
 
         if self.X is None:
-            self.times = times_
-            self.X = np.atleast_2d(X)
+            self.times = np.array([t])
+            self.X = np.atleast_2d(conf_vec)
             return
 
-        DT = times_[0] - self.times[-1]
+        DT = t - self.times[-1]
 
         if DT <= 0:
             raise AssertionError('Set a new classification time starting at '
@@ -249,32 +244,8 @@ class ActivityHMMRos:
                                  'relative to most-recent update for time '
                                  '%0.4f' % (start_time, DT, self.times[-1]))
 
-        if DT > self.dt*1.5:
-            last_time = self.times[-1]
-
-            # If there is a long idle period, at most, let's add in 5 seconds
-            # of buffer.
-            last_time = max([last_time, start_time - 5])
-
-            n = int(np.round((start_time - last_time)/self.dt))
-            n = max([n, 1])
-            n += 1
-            times_fill = np.linspace(last_time, start_time, n)
-            times_fill = (times_fill[1:] + times_fill[:-1])/2
-
-            X_fill = np.zeros((len(times_fill), self.X.shape[1]))
-
-            # These are the mean values for each classifier. Spoofing to these
-            # during blackout periods tells HMM that no state is more likely
-            # than another.
-            mean_vals = np.diag(self.model.model.means_)[self.model.fwd_map]
-            X_fill = np.tile(mean_vals, (len(times_), 1))
-
-            self.times = np.hstack([self.times, times_fill])
-            self.X = np.vstack([self.X, X_fill])
-
-        self.times = np.hstack([self.times, times_])
-        self.X = np.vstack([self.X, X])
+        self.times = np.hstack([self.times, t])
+        self.X = np.vstack([self.X, conf_vec])
 
     def revert_to_step(self, step_ind):
         """Erase history back to when we were at the specified step.
@@ -619,7 +590,8 @@ class ActivityHMM(object):
 
         # If we are in an activity (class) with probability of transitioning out
         # tii, then the probability that we are still in this class after n
-        # timesteps is tii^n.
+        # timesteps is tii^n. We want to know the probability such that
+        # tii^n = 0.5, i.e., the median probability.
         tdiag = (0.5)**(1/n)
 
         # Only valid states are possible.
