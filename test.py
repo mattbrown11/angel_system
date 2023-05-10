@@ -29,8 +29,8 @@ from angel_system.impls.detect_activities.detections_to_activities.utils import 
 from angel_system.activity_hmm.eval import save_matrix_image
 
 
-pred_train_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_and_before_finished_steps_results_train_activity.mscoco.json'
-
+pred_train_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_and_before_finished_steps_no_contact_results_train_activity.mscoco.json'
+pred_test_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_and_before_finished_steps_no_contact_results_test.mscoco.json'
 activity_fname = ''
 act_label_yaml = '/angel_workspace/config/activity_labels/medical_tourniquet.yaml'
 
@@ -158,10 +158,14 @@ for image_id in ann_by_image:
         top.append(ann['bbox'][2])
         bottom.append(ann['bbox'][3])
         label_confidences.append(ann['confidence'])
-        obj_obj_contact_state.append(ann['obj-obj_contact_state'])
-        obj_obj_contact_conf.append(ann['obj-obj_contact_conf'])
-        obj_hand_contact_state.append(ann['obj-hand_contact_state'])
-        obj_hand_contact_conf.append(ann['obj-hand_contact_conf'])
+
+        try:
+            obj_obj_contact_state.append(ann['obj-obj_contact_state'])
+            obj_obj_contact_conf.append(ann['obj-obj_contact_conf'])
+            obj_hand_contact_state.append(ann['obj-hand_contact_state'])
+            obj_hand_contact_conf.append(ann['obj-hand_contact_conf'])
+        except KeyError:
+            pass
 
     feature_vec = obj_det2d_set_to_feature(label_vec, left, right, top, bottom,
                                            label_confidences, None,
@@ -193,6 +197,30 @@ X = X[ind]
 y = y[ind]
 dataset_id = dataset_id[ind]
 
+
+if True:
+    # Give credit to interstitial to either side.
+    interstitial_ids = [1, 3, 5, 7, 9, 11, 13, 15]
+    X2 = X.copy()
+    y2 = y.copy()
+    dataset_id2 = dataset_id.copy()
+    for interstitial_id in interstitial_ids:
+        ind = y == interstitial_id
+        X2 = np.vstack([X2, X[ind]])
+        y2 = np.hstack([y2, y[ind] - 1])
+        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
+        X2 = np.vstack([X2, X[ind]])
+        y2 = np.hstack([y2, y[ind] + 1])
+        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
+
+    X0 = X.copy()
+    y0 = y.copy()
+    dataset_id0 = dataset_id.copy()
+    X = X2
+    y = y2
+    dataset_id = dataset_id2
+
+
 plt.imshow(np.cov(X.T))
 
 y_ = y.tolist()
@@ -210,7 +238,7 @@ plt.tight_layout()
 plt.savefig('/angel_workspace/ros_bags/gt_counts.png')
 
 
-def fit(clf, n_splits=2, n_components=50):
+def fit(clf, X, y, dataset_id, n_splits=2, n_components=50):
     group_kfold = GroupKFold(n_splits=n_splits)
     y_test = []
     ypred_test = []
@@ -257,19 +285,19 @@ C = np.logspace(-6, 2, 20)
 err = []
 for C_ in C:
     clf.C = C_
-    err.append(fit(clf)[0])
+    err.append(fit(clf, X, y, dataset_id)[0])
     print(C_, err[-1])
 
 plt.semilogx(C[:len(err)], err, 'ro')
 
 clf.C = C[np.argmax(err)]
 
-y_test, ypred_test = fit(clf, n_splits=5)[1:]
+y_test, ypred_test = fit(clf, X, y, dataset_id, n_splits=5, n_components=50)[1:]
 
 
 scores = []
 for n_components in range(5, 50):
-    score_ = fit(clf, n_components=n_components)[0]
+    score_ = fit(clf, X, y, dataset_id, n_components=n_components)[0]
     print(n_components, score_)
     scores.append(score_)
 
@@ -277,48 +305,59 @@ plt.plot(range(5, 50), scores)
 
 # ----------------------------------------------------------------------------
 # GaussianNB
-best_score = 0
-best_model = None
+best_models = {}
+
+def check_score(clf, X, y):
+    score_ = fit(clf, X, y, dataset_id)[0]
+    best_models[score_] = copy.deepcopy(clf)
+    print('Score', score_)
+    return score_
 
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 kernel = 1.0 * RBF(0.1)
 clf = GaussianProcessClassifier(kernel=kernel, random_state=0)
+check_score(clf)
 
 from sklearn.naive_bayes import GaussianNB
 clf = GaussianNB()
-print(fit(clf)[0])
+check_score(clf)
 
 from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
-clf = QuadraticDiscriminantAnalysis(reg_param=2)
+clf = QuadraticDiscriminantAnalysis(reg_param=1)
+check_score(clf)
 
 from sklearn.ensemble import RandomForestClassifier
 clf = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=1000,
                              bootstrap=True)
+check_score(clf)
 
 from sklearn.tree import DecisionTreeClassifier
 clf = DecisionTreeClassifier(random_state=0)
+check_score(clf)
 
 from sklearn.ensemble import AdaBoostClassifier
 clf = LogisticRegression(random_state=0, max_iter=1000)
 clf = AdaBoostClassifier(clf, n_estimators=100, random_state=0)
+check_score(clf)
+
+from sklearn.naive_bayes import ComplementNB
+clf = ComplementNB(force_alpha=True)
+check_score(clf)
 
 from sklearn.svm import SVC
 from sklearn.svm import LinearSVC
 clf = SVC(gamma=0.025)
+check_score(clf)
 clf = LinearSVC(random_state=0, tol=1e-5)
+check_score(clf)
 
 C = np.logspace(-2, 2, 20)
 score = []
 for C_ in C:
     clf.C = C_
-    score_ = fit(clf)[0]
+    score_ = check_score(clf)
     score.append(score_)
-    print(score_)
-    if score_ > best_score:
-        best_score = score_
-        best_model = copy.deepcopy(clf)
-
     print(C_, score[-1])
 
 plt.semilogx(C[:len(score)], score, 'ro')
@@ -327,15 +366,16 @@ plt.legend()
 # ----------------------------------------------------------------------------
 
 
-pipe = make_pipeline(PCA(whiten=True, n_components=15), clf)
-pipe.fit(X, y)
+pipe = make_pipeline(PCA(whiten=True, n_components=50), clf)
+pipe.fit(X2, y2)
 pipe.predict(X[0].reshape(1, -1))
 
-fname = '/angel_workspace/model_files/recipe_m2_apply_tourniquet_v0.052.pkl'
+fname = '/angel_workspace/model_files/recipe_m2_apply_tourniquet_v0.052.2.pkl'
 with open(fname, 'wb') as of:
     pickle.dump([label_to_ind, 1, pipe, act_str_list], of)
 
 
+y2 = pipe.named_steps['pca'].transform(X)
 
 
 
