@@ -21,13 +21,16 @@ from sklearn.decomposition import PCA
 from sklearn.pipeline import make_pipeline
 from random import shuffle
 import pickle
+import cv2
+import copy
 
 # angel imports
 from angel_system.impls.detect_activities.detections_to_activities.utils import obj_det2d_set_to_feature
+from angel_system.activity_hmm.eval import save_matrix_image
 
 
-pred_train_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_steps_results_train_activity.mscoco.json'
-pred_test_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_steps_results_test.mscoco.json'
+pred_train_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_and_before_finished_steps_results_train_activity.mscoco.json'
+pred_test_fname = '/angel_workspace/ros_bags/m2_with_lab_cleaned_fixed_data_with_inter_and_before_finished_steps_results_test.mscoco.json'
 activity_fname = ''
 act_label_yaml = '/angel_workspace/config/activity_labels/medical_tourniquet.yaml'
 
@@ -208,7 +211,7 @@ plt.savefig('/angel_workspace/ros_bags/gt_counts.png')
 
 
 
-def fit(clf, n_splits=2):
+def fit(clf, n_splits=2, n_components=50):
     group_kfold = GroupKFold(n_splits=n_splits)
     y_test = []
     ypred_test = []
@@ -222,7 +225,8 @@ def fit(clf, n_splits=2):
         if True:
             #X_ = PCA(whiten=True, n_components='mle').fit_transform(X_)
             #pipe = make_pipeline(PCA(whiten=True, n_components='mle'), clf)
-            pipe = make_pipeline(PCA(whiten=True, n_components=15), clf)
+            pipe = make_pipeline(PCA(whiten=True, n_components=n_components),
+                                 clf)
         else:
             pipe = make_pipeline(RobustScaler(), clf)
 
@@ -248,6 +252,7 @@ def fit(clf, n_splits=2):
     return accuracy_score(y_test, ypred_test), y_test, ypred_test
 
 
+# Logistic regression.
 clf = LogisticRegression(random_state=0, max_iter=1000)
 C = np.logspace(-6, 2, 20)
 err = []
@@ -256,12 +261,71 @@ for C_ in C:
     err.append(fit(clf)[0])
     print(C_, err[-1])
 
-plt.semilogx(C, err, 'ro')
+plt.semilogx(C[:len(err)], err, 'ro')
 
 clf.C = C[np.argmax(err)]
 
 y_test, ypred_test = fit(clf, n_splits=5)[1:]
 
+
+scores = []
+for n_components in range(5, 50):
+    score_ = fit(clf, n_components=n_components)[0]
+    print(n_components, score_)
+    scores.append(score_)
+
+plt.plot(range(5, 50), scores)
+
+# ----------------------------------------------------------------------------
+# GaussianNB
+best_score = 0
+best_model = None
+
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.gaussian_process.kernels import RBF
+kernel = 1.0 * RBF(0.1)
+clf = GaussianProcessClassifier(kernel=kernel, random_state=0)
+
+from sklearn.naive_bayes import GaussianNB
+clf = GaussianNB()
+print(fit(clf)[0])
+
+from sklearn.discriminant_analysis import QuadraticDiscriminantAnalysis
+clf = QuadraticDiscriminantAnalysis(reg_param=2)
+
+from sklearn.ensemble import RandomForestClassifier
+clf = RandomForestClassifier(max_depth=None, random_state=0, n_estimators=1000,
+                             bootstrap=True)
+
+from sklearn.tree import DecisionTreeClassifier
+clf = DecisionTreeClassifier(random_state=0)
+
+from sklearn.ensemble import AdaBoostClassifier
+clf = LogisticRegression(random_state=0, max_iter=1000)
+clf = AdaBoostClassifier(clf, n_estimators=100, random_state=0)
+
+from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
+clf = SVC(gamma=0.025)
+clf = LinearSVC(random_state=0, tol=1e-5)
+
+C = np.logspace(-2, 2, 20)
+score = []
+for C_ in C:
+    clf.C = C_
+    score_ = fit(clf)[0]
+    score.append(score_)
+    print(score_)
+    if score_ > best_score:
+        best_score = score_
+        best_model = copy.deepcopy(clf)
+
+    print(C_, score[-1])
+
+plt.semilogx(C[:len(score)], score, 'ro')
+#plt.semilogx(C[:len(score)], score, 'ro', label='gamma=%s' % clf.gamma)
+plt.legend()
+# ----------------------------------------------------------------------------
 
 
 
@@ -373,3 +437,142 @@ plt.ylabel('True Steps', fontsize=34)
 plt.xlabel('Predicted Steps', fontsize=34)
 plt.tight_layout()
 plt.savefig('/angel_workspace/ros_bags/tourniquet_step_classification.png')
+# ----------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------
+fname = '/angel_workspace/ros_bags/kitware_test_results_test.mscoco.json'
+with open(pred_train_fname, 'r') as f:
+    dat = json.load(f)
+
+ann_by_image = {}
+for ann in dat['annotations']:
+    if ann['image_id'] not in ann_by_image:
+        ann_by_image[ann['image_id']] = [ann]
+    else:
+        ann_by_image[ann['image_id']].append(ann)
+
+# Generate features using code above.
+
+fname = '/angel_workspace/model_files/recipe_m2_apply_tourniquet_v0.052.pkl'
+with open(fname, 'rb') as of:
+    label_to_ind, feat_ver, clf, act_str_list = pickle.load(of)
+
+
+label_to_ind = {cat['name']: cat['id'] - min_cat  for cat in dat['categories']}
+act_id_to_str = {cat['id']: cat['name'] for cat in dat['categories']}
+
+
+X = []
+y = []
+dataset_id = []
+last_dset = 0
+for image_id in ann_by_image:
+    label_vec = []
+    left = []
+    right = []
+    top = []
+    bottom = []
+    label_confidences = []
+    obj_obj_contact_state = []
+    obj_obj_contact_conf = []
+    obj_hand_contact_state = []
+    obj_hand_contact_conf = []
+
+    for ann in ann_by_image[image_id]:
+        label_vec.append(act_id_to_str[ann['category_id']])
+        left.append(ann['bbox'][0])
+        right.append(ann['bbox'][1])
+        top.append(ann['bbox'][2])
+        bottom.append(ann['bbox'][3])
+        label_confidences.append(ann['confidence'])
+        obj_obj_contact_state.append(ann['obj-obj_contact_state'])
+        obj_obj_contact_conf.append(ann['obj-obj_contact_conf'])
+        obj_hand_contact_state.append(ann['obj-hand_contact_state'])
+        obj_hand_contact_conf.append(ann['obj-hand_contact_conf'])
+
+    feature_vec = obj_det2d_set_to_feature(label_vec, left, right, top, bottom,
+                                           label_confidences, None,
+                                           obj_obj_contact_state,
+                                           obj_obj_contact_conf,
+                                           obj_hand_contact_state,
+                                           obj_hand_contact_conf, label_to_ind,
+                                           version=1)
+
+    X.append(feature_vec.ravel())
+    try:
+        dataset_id.append(image_id_to_dataset[image_id])
+        last_dset = dataset_id[-1]
+    except:
+        dataset_id.append(last_dset)
+
+    try:
+        #y.append(trim_act_map[image_activity_gt[image_id]])
+        y.append(image_activity_gt[image_id])
+    except:
+        y.append(0)
+
+X = np.array(X)
+y = np.array(y)
+dataset_id = np.array(dataset_id)
+
+
+
+# ----------------------------------------------------------------------------
+y_pred = clf.predict_proba(X)
+
+fname = '/angel_workspace/ros_bags/det_step_class.png'
+save_matrix_image(X.T, fname, max_w=8000, aspect_ratio=1, first_ind=1)
+
+fname = '/angel_workspace/ros_bags/step_class.png'
+save_matrix_image(clf.predict_proba(X).T, fname, max_w=8000, aspect_ratio=4, first_ind=0)
+
+
+#h2 = w
+
+
+
+# ----------------------------------------------------------------------------
+
+
+# ----------------------------------------------------------------------------
+import angel_system
+from angel_system.activity_hmm.core import ActivityHMMRos
+
+config_fname = '/angel_workspace/config/tasks/task_steps_config-recipe_m2_apply_tourniquet_v0.052.yaml'
+print(f'Loading HMM with recipe {config_fname}')
+live_model = ActivityHMMRos(config_fname)
+
+live_model.class_std_conf = np.maximum(live_model.class_std_conf, 5)
+
+if False:
+    fname = '/angel_workspace/ros_bags/hhm_class_mean_conf.png'
+    save_matrix_image(live_model.class_mean_conf, fname, max_w=4000, aspect_ratio=1, first_ind=0)
+
+    fname = '/angel_workspace/ros_bags/hhm_class_std_conf.png'
+    a = live_model.class_mean_conf/live_model.class_std_conf
+    a = a/np.max(a)
+    save_matrix_image(a, fname, max_w=4000, aspect_ratio=1, first_ind=0)
+
+
+t = 0
+dt = 0.025
+step_finished_confs = []
+i = 0
+avg_steps = 50
+while i < len(y_pred):
+    print(i)
+    conf_vec = np.max(y_pred[i:i+avg_steps], axis=0)
+    live_model.add_activity_classification(range(live_model.num_activities),
+                                           conf_vec, t, t + dt)
+    t += dt
+    step_finished_conf = live_model.analyze_current_state()[3]
+    step_finished_confs.append(step_finished_conf)
+    i += avg_steps
+
+
+step_finished_confs = np.array(step_finished_confs).T
+
+fname = '/angel_workspace/ros_bags/hhm_step_finished_confs.png'
+save_matrix_image(step_finished_confs, fname, max_w=4000, aspect_ratio=4,
+                  first_ind=0, colormap=cv2.COLORMAP_HOT)
