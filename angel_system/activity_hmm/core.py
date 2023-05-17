@@ -759,6 +759,18 @@ class ActivityHMM(object):
         # TODO stop return X, it is now redundant.
         return times, X, Z, X, Z_
 
+    def log_prob_raw_sample(self, X):
+        """Get GMM log likelihood for single emission against each component.
+        """
+        log_prob = []
+        for step_ind in range(len(self.fwd_map)):
+            mean = self.model.means_[self.fwd_map[step_ind]]
+            cov = np.diag(self.model._covars_[self.fwd_map[step_ind]])
+            n1 = scipy.stats.multivariate_normal(mean=mean, cov=cov)
+            log_prob.append(n1.logpdf(X))
+
+        return np.array(log_prob)
+
     def get_model_force_skip_step(self, force_skip_step):
         """Return model that requires we skip a specific step.
 

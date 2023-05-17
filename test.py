@@ -30,6 +30,7 @@ from sklearn import preprocessing
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.svm import SVC, LinearSVC
 from sklearn.ensemble import RandomForestClassifier
+from matplotlib.backends.backend_pdf import PdfPages
 
 # angel imports
 from angel_system.impls.detect_activities.detections_to_activities.utils import obj_det2d_set_to_feature
@@ -204,28 +205,22 @@ y = y[ind]
 dataset_id = dataset_id[ind]
 
 if True:
-    ref = set(range(max(y) + 1))
-    # Make sure every dataset has at least one example of each step.
-    for i in sorted(list(set(dataset_id))):
-        ind = dataset_id == i
-        for j in ref.difference(set(y[ind])):
-            y = np.hstack([y, j])
-            X = np.vstack([X, np.zeros(X[0].shape)])
-            dataset_id = np.hstack([dataset_id, i])
-
-if True:
-    # Get rid of Not Started and Finish.
+    # Get rid of Not Started and Finish and just call them background.
     ind = y == 1
     y[ind] = 0
     ind = y == 17
     y[ind] = 0
-    y = np.hstack([y, 1])
-    dataset_id = np.hstack([dataset_id, 0])
-    X = np.vstack([X, np.ones(X[0].shape)*1000000])
-    y = np.hstack([y, 17])
-    X = np.vstack([X, np.ones(X[0].shape)*1000000])
-    dataset_id = np.hstack([dataset_id, 0])
 
+if True:
+    ref = set(range(len(act_map)))
+    # Make sure every dataset has at least one example of each step.
+    for i in sorted(list(set(dataset_id))):
+        #ind = dataset_id == i
+        #for j in ref.difference(set(y[ind])):
+        for j in ref:
+            y = np.hstack([y, j])
+            X = np.vstack([X, np.zeros(X[0].shape)])
+            dataset_id = np.hstack([dataset_id, i])
 
 if False:
     # Check which examples show up in which datasets.
@@ -239,6 +234,42 @@ if False:
     save_matrix_image(coverage, fname, max_w=1000, aspect_ratio=1, first_ind=0,
                       col_labels=True)
 
+if False:
+    ind = list(range(len(y)))
+    shuffle(ind)
+    X = X[ind]
+    y = y[ind]
+    dataset_id = dataset_id[ind]
+
+
+if True:
+    # Give credit to interstitial to prior step or background.
+    interstitial_ids = [1, 3, 5, 7, 9, 11, 13, 15]
+    X2 = X.copy()
+    y2 = y.copy()
+    dataset_id2 = dataset_id.copy()
+    for interstitial_id in interstitial_ids:
+        ind = y == interstitial_id
+        X2 = np.vstack([X2, X[ind]])
+        y2 = np.hstack([y2, y[ind] - 1])
+        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
+        # X2 = np.vstack([X2, X[ind]])
+        # y2 = np.hstack([y2, y[ind] + 1])
+        # dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
+
+        if interstitial_id > 0:
+            X2 = np.vstack([X2, X[ind]])
+            y2 = np.hstack([y2, y[ind]*0])
+            dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
+
+    X0 = X.copy()
+    y0 = y.copy()
+    dataset_id0 = dataset_id.copy()
+    X = X2
+    y = y2
+    dataset_id = dataset_id2
+
+
 if True:
     # Carve out final test set.
     val_fract = 0.2
@@ -251,42 +282,13 @@ if True:
     X = X[~ind]
     y = y[~ind]
     dataset_id = dataset_id[~ind]
+else:
+    X_final_test = X
+    y_final_test = y
+    dataset_id_final_test = dataset_id
 
 
-ind = list(range(len(y)))
-shuffle(ind)
-X = X[ind]
-y = y[ind]
-dataset_id = dataset_id[ind]
-
-
-if False:
-    # Give credit to interstitial to either side and background.
-    interstitial_ids = [1, 3, 5, 7, 9, 11, 13, 15]
-    X2 = X.copy()
-    y2 = y.copy()
-    dataset_id2 = dataset_id.copy()
-    for interstitial_id in interstitial_ids:
-        ind = y == interstitial_id
-        X2 = np.vstack([X2, X[ind]])
-        y2 = np.hstack([y2, y[ind] - 1])
-        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
-        X2 = np.vstack([X2, X[ind]])
-        y2 = np.hstack([y2, y[ind] + 1])
-        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
-        X2 = np.vstack([X2, X[ind]])
-        y2 = np.hstack([y2, 0])
-        dataset_id2 = np.hstack([dataset_id2, dataset_id[ind]])
-
-    X0 = X.copy()
-    y0 = y.copy()
-    dataset_id0 = dataset_id.copy()
-    X = X2
-    y = y2
-    dataset_id = dataset_id2
-
-
-plt.imshow(np.cov(X.T))
+plt.imshow(np.cov(X.T)); plt.colorbar()
 
 y_ = y.tolist()
 x_ = list(range(max(y) + 1))
@@ -391,6 +393,7 @@ for i, l1_ratio in enumerate(l1_ratios):
         score_image[i, j] = s
         print('Score', clf.C, clf.l1_ratio, s)
 
+clf = best_models[max(best_models.keys())]
 x = sorted(best_models.keys())
 plt.plot([best_models[x_].C for x_ in x],
 
@@ -549,6 +552,9 @@ plt.legend()
 
 y_test, ypred_test = fit(clf, X, y, dataset_id, n_splits=5, n_components=50)[1:]
 pipe = make_pipeline(PCA(whiten=True, n_components=50), clf)
+
+class_count = {i: np.count_nonzero(y == i) for i in set(y)}
+sample_weight = [class_weight[i] for i in y]
 pipe.fit(X, y)
 
 # Calibrate model.
@@ -557,6 +563,10 @@ calibrated_clf = CalibratedClassifierCV(pipe, cv=5)
 calibrated_clf.fit(X, y)
 
 y_score = pipe.predict_proba(X_final_test)
+
+fname = '/angel_workspace/ros_bags/y_pred_.png'
+save_matrix_image(y_score[np.argsort(y_final_test)].T, fname, max_w=8000, aspect_ratio=4, first_ind=0)
+
 lb = preprocessing.LabelBinarizer()
 y_true = lb.fit(range(y_score.shape[1])).transform(y_final_test)
 s1 = average_precision_score(y_true, y_score)
@@ -866,12 +876,28 @@ for i in range(len(y)):
             raise Exception()
 
 maps = [average_precision_score(y_[:, i], X[:, i]) for i in range(y_.shape[1])]
-['MAP: %0.3f (%0.0f%% examples) - %s' %
- (maps[i], (np.mean(y_[:, i]))*100, acts[i]) for i in np.argsort(maps)[::-1]]
+examples = [np.mean(y_[:, i]) for i in range(len(maps))]
+maps = np.array(maps)
+examples = np.array(examples)
+['MAP: %0.1f%% (%0.0f%% examples) - %s' %
+ (maps[i]*100, (examples[i])*100, acts[i]) for i in np.argsort(maps/examples)[::-1]]
 
-i = 0
-print('%0.1f%% true examples' % ((np.mean(y_[:, i]))*100))
-plt.plot(*precision_recall_curve(y_[:, i], X[:, i])[:2][::-1]); plt.ylim([0, 1])
+fname = '/angel_workspace/ros_bags/pr_curves.pdf'
+with PdfPages(fname) as pdf:
+    for i in np.argsort(maps/examples)[::-1]:
+        fig = plt.figure(figsize=(3, 3))
+        print('%0.1f%% true examples' % ((np.mean(y_[:, i]))*100))
+        plt.plot(*precision_recall_curve(y_[:, i], X[:, i])[:2][::-1],
+                 label='Detector')
+        plt.plot(*precision_recall_curve(y_[:, i],
+                                         np.random.rand(len(y_)))[:2][::-1],
+                 label='Guessing')
+        plt.legend()
+        plt.ylim([0, 1])
+        plt.title(acts[i])
+        pdf.savefig(fig)  # or you can pass a Figure object to pdf.savefig
+
+    plt.close('all')
 # ----------------------------------------------------------------------------
 
 
@@ -883,7 +909,41 @@ config_fname = '/angel_workspace/config/tasks/task_steps_config-recipe_m2_apply_
 print(f'Loading HMM with recipe {config_fname}')
 live_model = ActivityHMMRos(config_fname)
 
-live_model.class_std_conf = np.maximum(live_model.class_std_conf, 5)
+if False:
+    # Train model on test set.
+    X = X_final_test
+    y = y_final_test
+    clf = RandomForestClassifier(max_depth=7, random_state=0, n_estimators=100,
+                                 max_features=0.05, bootstrap=True)
+    clf.fit(X, y)
+
+#live_model.class_std_conf = np.maximum(live_model.class_std_conf, 5)
+live_model.med_class_duration = 100
+
+
+y_pred = pipe.predict_proba(X)
+plt.imshow(np.cov(y_pred.T)); plt.colorbar()
+
+class_mean_conf = []
+class_std_conf = []
+for i in range(max(y) + 1):
+    ind = y == i
+    v = y_pred[ind]
+    class_mean_conf.append(np.mean(v, axis=0))
+    class_std_conf.append(np.std(v, axis=0))
+
+class_mean_conf = np.array(class_mean_conf)
+class_std_conf = np.array(class_std_conf)
+plt.imshow(class_mean_conf); plt.colorbar()
+plt.imshow(class_std_conf); plt.colorbar()
+
+live_model.class_mean_conf = class_mean_conf
+live_model.class_std_conf = class_std_conf
+
+
+live_model.class_mean_conf = np.identity(len(live_model.class_mean_conf))
+live_model.class_std_conf += 0.1
+
 
 if False:
     fname = '/angel_workspace/ros_bags/hhm_class_mean_conf.png'
@@ -895,24 +955,59 @@ if False:
     save_matrix_image(a, fname, max_w=4000, aspect_ratio=1, first_ind=0)
 
 
-t = 0
-dt = 0.025
-step_finished_confs = []
-i = 0
-avg_steps = 50
-while i < len(y_pred):
-    print(i)
-    conf_vec = np.max(y_pred[i:i+avg_steps], axis=0)
-    live_model.add_activity_classification(range(live_model.num_activities),
-                                           conf_vec, t, t + dt)
-    t += dt
-    step_finished_conf = live_model.analyze_current_state()[3]
-    step_finished_confs.append(step_finished_conf)
-    i += avg_steps
+y_pred_final_test = pipe.predict_proba(X_final_test)
+for ds_id in sorted(list(set(dataset_id_final_test))):
+    ind = dataset_id_final_test == ds_id
+    y_ = y_final_test[ind]
+    y_pred_ = y_pred_final_test[ind]
+    ind = random.permutation(range(len(y_)))
+    y_ = y_[ind]
+    y_pred_ = y_pred_[ind]
+    ind = np.argsort(y_)
+    y_ = y_[ind]
+    y_pred_ = y_pred_[ind]
+
+    if False:
+        fname = '/angel_workspace/ros_bags/y_pred_.png'
+        save_matrix_image(y_pred_.T, fname, max_w=8000, aspect_ratio=4, first_ind=0)
+
+    # Analyze raw emissions.
+    emissions = []
+    for i in range(len(y_pred_)):
+        ll = live_model.model.log_prob_raw_sample(y_pred_[i])
+        ll = ll - max(ll)
+        prob = np.exp(ll)
+        prob /= sum(prob)
+        emissions.append(prob)
+
+    emissions = np.array(emissions)
+
+    fname = '/angel_workspace/ros_bags/hmm_emmissions.png'
+    save_matrix_image(emissions.T, fname, max_w=4000, aspect_ratio=4,
+                      first_ind=0, colormap=cv2.COLORMAP_HOT)
 
 
-step_finished_confs = np.array(step_finished_confs).T
+    t = 0
+    dt = 1/30
+    curr_state = []
+    step_finished_confs = []
+    i = 0
+    avg_steps = 1
+    live_model.clear_history()
+    while i < len(y_pred_):
+        conf_vec = np.max(y_pred_[i:i+avg_steps], axis=0)
+        live_model.add_activity_classification(range(live_model.num_activities),
+                                               conf_vec, t, t + dt)
+        t += dt
+        _, state_sequence, _, step_finished_conf = live_model.analyze_current_state()
+        step_finished_confs.append(step_finished_conf)
+        curr_state.append(state_sequence[-1])
+        print(i, 'curr_state: ', state_sequence[-1])
+        i += avg_steps
 
-fname = '/angel_workspace/ros_bags/hhm_step_finished_confs.png'
-save_matrix_image(step_finished_confs, fname, max_w=4000, aspect_ratio=4,
-                  first_ind=0, colormap=cv2.COLORMAP_HOT)
+    plt.plot(curr_state)
+    step_finished_confs = np.array(step_finished_confs).T
+
+    fname = '/angel_workspace/ros_bags/hhm_step_finished_confs.png'
+    save_matrix_image(step_finished_confs, fname, max_w=4000, aspect_ratio=4,
+                      first_ind=0, colormap=cv2.COLORMAP_HOT)
