@@ -33,3 +33,10 @@ def obj_det2d_set_to_feature(label_vec, left, right, top, bottom,
         raise Exception(f'Unhandled version \'{version}\'')
 
     return feature_vec
+
+
+def get_object_bboxes(label_vec, left, right, top, bottom,
+                      label_confidences):
+    obj_labels = ['hand', 'tourniquet', 'pen', 'windlass', 'label']
+    objects = {obj_label: np.array([0, 0, 0, 0, 0]) for obj_label in obj_labels}
+

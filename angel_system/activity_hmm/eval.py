@@ -86,13 +86,16 @@ def plot_precision_recall(true_example_scores, false_example_scores,
         plt.legend(fontsize=20, loc=0)
 
 
-def save_matrix_image(mat, fname, min_w=2000, max_w=8000, aspect_ratio=4,
-                      first_ind=0, colormap=cv2.COLORMAP_JET):
+def save_matrix_image(mat, fname, min_w=100, max_w=8000, aspect_ratio=4,
+                      first_ind=0, col_labels=False,
+                      colormap=cv2.COLORMAP_JET):
     """Save image of num_class x num_results matrix.
 
     first_ind : int
         Integer of the first row to start counting from.
     """
+    assert min_w <= max_w
+
     h, w = mat.shape
     num_class = h
 
@@ -132,12 +135,44 @@ def save_matrix_image(mat, fname, min_w=2000, max_w=8000, aspect_ratio=4,
                                fontScale=font_scale, thickness=font_thickness)
 
     r1 = int(textSize[0][0]*1.05)
+
+    if col_labels:
+        textSize = cv2.getTextSize(str(num_class+1),
+                               fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                               fontScale=font_scale, thickness=font_thickness)
+
+        r2 = int(textSize[0][1]*1.05)
+
+        out = cv2.copyMakeBorder(out, top=r2, bottom=0, left=0, right=0,
+                                borderType=cv2.BORDER_CONSTANT,
+                                value=[0, 0, 0])
+        xs = np.linspace(1, out.shape[1] - 1, mat.shape[1] + 1).astype(int)
+        for i in range(len(xs) - 1):
+            dx = int((xs[i+1] - xs[i]))
+            cv2.line(out, (xs[i], 0), (xs[i], out.shape[0]), (255, 255, 255),
+                     thickness=2)
+
+            textSize = cv2.getTextSize(str(i + first_ind),
+                                       fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                                       fontScale=font_scale,
+                                       thickness=font_thickness)
+            y = int((r2 - textSize[0][1])/2 - 2)
+            x = int(xs[i + 1] - (dx - textSize[0][1])/2)
+
+            cv2.putText(out, str(i + first_ind), (x, y),
+                        fontFace=cv2.FONT_HERSHEY_SIMPLEX,
+                        fontScale=font_scale,
+                        color=(255, 255, 255),
+                        thickness=font_thickness, lineType=1)
+    else:
+        r2 = 0
+
     out = cv2.copyMakeBorder(out, top=0, bottom=0, left=r1, right=0,
                                 borderType=cv2.BORDER_CONSTANT,
                                 value=[0, 0, 0])
 
     cv2.line(out, (0, 0), (out.shape[1], 0), (255, 255, 255), thickness=2)
-    ys = np.linspace(1, out.shape[0] - 1, num_class + 1).astype(int)
+    ys = np.linspace(r2 + 1, out.shape[0] - 1, num_class + 1).astype(int)
     for i in range(len(ys) - 1):
         dy = int((ys[i+1] - ys[i]))
         cv2.line(out, (0, ys[i] ), (out.shape[1], ys[i] ), (255, 255, 255),

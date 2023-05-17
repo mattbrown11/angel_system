@@ -8,6 +8,7 @@ from sklearn.metrics import  accuracy_score
 import scipy
 import yaml
 from scipy.optimize import minimize, root_scalar
+import pickle
 
 from angel_system.activity_hmm.core import ActivityHMM, ActivityHMMRos, \
     get_skip_score, score_raw_detections, load_and_discretize_data
@@ -27,7 +28,11 @@ os.chdir('/home/local/KHQ/matt.brown/libraries/angel_system')
 
 
 # ----------------------------------------------------------------------------
-config_fname = '/angel_system/config/tasks/task_steps_config-recipe_m2_apply_tourniquet_v0.052.yaml'
+config_fname = '/angel_workspace/config/tasks/task_steps_config-recipe_m2_apply_tourniquet_v0.052.yaml'
+
+# Map activities to steps
+with open(config_fname, 'r') as stream:
+    config = yaml.safe_load(stream)
 
 if False:
     # Old way.
@@ -90,7 +95,7 @@ else:
     with open(fname, 'rb') as of:
         X, true_step = pickle.load(of)
 
-    valid = np.ones(len(activity_ids), dtype=bool)
+    valid = np.ones(len(true_step), dtype=bool)
 
 
 # ----------------------------------------------------------------------------
@@ -130,6 +135,20 @@ for i in range(num_classes):
 med_class_duration = np.array(med_class_duration)
 class_mean_conf = np.array(class_mean_conf)
 class_std_conf = np.array(class_std_conf)
+
+
+# ----------------------------------------------------------------------------
+med_class_duration[:] = 10
+class_mean_conf[1] = 1
+class_mean_conf[17] = 1
+#class_std_conf = np.maximum(class_std_conf, 0.025)
+class_mean_conf[0] = 1
+class_std_conf[:, 0] = 10
+class_std_conf[:, 17] = 10
+class_std_conf[0] = 10
+class_std_conf[17] = 10
+
+# ----------------------------------------------------------------------------
 
 # ----------------------------------------------------------------------------
 if False:
