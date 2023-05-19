@@ -86,6 +86,99 @@ def plot_precision_recall(true_example_scores, false_example_scores,
         plt.legend(fontsize=20, loc=0)
 
 
+def viz_step_finished_conf(live_model, X, true_step, time_windows, valid,
+                           save_fname=None):
+    live_model.clear_history()
+    N = len(time_windows)
+    #N = 1000
+    true_example = []
+    false_example = []
+    thresh = 0.5
+    correct = 0
+
+    running_step_finished_conf = []
+    running_unfiltered_step_conf = []
+    for i in range(N):
+        print('State', i + 1)
+        live_model.add_activity_classification(range(live_model.num_activities),
+                                               X[i], time_windows[i, 0],
+                                               time_windows[i, 1])
+
+        ret = live_model.analyze_current_state()
+        times, state_sequence, step_finished_conf, raw_step_conf = ret
+
+        running_step_finished_conf.append(step_finished_conf)
+        running_unfiltered_step_conf.append(raw_step_conf)
+
+        truth_step_finished = [s in set(true_step[:i]) for s in range(1, live_model.model.num_steps)]
+        truth_step_finished = np.array(truth_step_finished)
+
+        correct += np.all(truth_step_finished == (step_finished_conf > thresh))
+
+        if np.any(truth_step_finished):
+            true_example.append(min(step_finished_conf[truth_step_finished]))
+
+        if np.any(~truth_step_finished):
+            false_example.append(max(step_finished_conf[~truth_step_finished]))
+
+        dsp_str = []
+        for i in range(len(step_finished_conf)):
+            if truth_step_finished[i]:
+                dsp_str.append('%.2f+' % step_finished_conf[i])
+            else:
+                dsp_str.append('%.2f-' % step_finished_conf[i])
+
+        print(', '.join(dsp_str))
+
+    running_step_finished_conf = np.array(running_step_finished_conf).T
+    running_unfiltered_step_conf = np.array(running_unfiltered_step_conf).T
+    true_example = np.array(true_example)
+    false_example = np.array(false_example)
+
+    plt.close('all')
+    fig = plt.figure(num=None, figsize=(14, 10), dpi=80)
+    plt.rc('font', **{'size': 22})
+    plt.rc('axes', linewidth=4)
+    plt.subplot(2, 1, 1)
+    plt.imshow(running_step_finished_conf,
+               extent=[times[0], times[-1], live_model.num_steps-0.5, -0.5],
+               aspect='auto', interpolation='nearest')
+    plt.plot(times, true_step[:N], 'r', linewidth=3)
+    plt.yticks(range(1, live_model.num_steps))
+    plt.title('HMM Step-Completion Confidence (Red=Truth)', fontsize=20)
+    plt.gca().yaxis.set_minor_locator(AutoMinorLocator(2))
+    plt.tick_params(
+            axis="y",
+            which="major",
+            grid_color='lightgrey')
+    plt.grid(axis='y', which='major')
+
+    plt.colorbar()
+    plt.subplot(2, 1, 2)
+    plt.imshow(running_unfiltered_step_conf,
+               extent=[times[0], times[-1], live_model.num_steps-0.5, -0.5],
+               aspect='auto', interpolation='nearest')
+    plt.plot(times, true_step[:N], 'r', linewidth=3)
+    plt.yticks(range(0, live_model.num_steps))
+    plt.colorbar()
+    plt.xlabel('Time (s)', fontsize=20)
+    plt.title('Raw Step Confidence (Red=Truth)', fontsize=20)
+    fig.tight_layout()
+
+    plt.gca().yaxis.set_minor_locator(AutoMinorLocator(2))
+    plt.tick_params(
+            axis="y",
+            which="major",
+            grid_color='lightgrey')
+    plt.grid(axis='y', which='major')
+    plt.tight_layout()
+
+    if save_fname is not None:
+        plt.savefig(save_fname)
+
+    plt.show()
+
+
 def save_matrix_image(mat, fname, min_w=100, max_w=8000, aspect_ratio=4,
                       first_ind=0, col_labels=False,
                       colormap=cv2.COLORMAP_JET):
